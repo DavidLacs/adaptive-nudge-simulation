@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "adaptive-nudge-simulation"
+version = "0.1.0"
+description = "Simulation-based evaluation of adaptive nudge timing using contextual bandits."
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "numpy>=2.0,<3.0",
+    "pandas>=2.0,<3.0",
+    "matplotlib>=3.8,<4.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
