@@ -16,3 +16,6 @@ results/
 
 # Environment variables / secrets
 .env
+
+# Python build/install artifacts
+*.egg-info/
