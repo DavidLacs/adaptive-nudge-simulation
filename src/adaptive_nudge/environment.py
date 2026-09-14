@@ -48,9 +48,22 @@ class Environment:
         self._context_rng = context_rng
         self._delivered_outcomes: list[int] = []
 
+        self._coefficients = (
+            self._build_scaled_coefficients()
+        )
+
         self._post_change_coefficients = (
             self._build_post_change_coefficients()
         )
+
+    def set_rngs(
+        self,
+        duration_rng: np.random.Generator,
+        context_rng: np.random.Generator,
+    ) -> None:
+        """Set the RNG streams used for session generation."""
+        self._duration_rng = duration_rng
+        self._context_rng = context_rng
 
     def reset(self) -> None:
         """Reset the history of previously delivered intervention outcomes."""
@@ -142,12 +155,20 @@ class Environment:
         decision_index: int,
     ) -> float:
         """Compute the ground-truth response probability."""
-        coefficients = self._coefficients_for_decision(
+        coefficients = self.coefficients_for_decision(
             decision_index
         )
 
+        if timing_minutes not in coefficients:
+            raise ValueError(
+                f"Unsupported timing: {timing_minutes}"
+            )
+
         probability = float(
-            np.dot(coefficients[timing_minutes], context)
+            np.dot(
+                coefficients[timing_minutes],
+                context,
+            )
         )
 
         if not 0.0 <= probability <= 1.0:
@@ -193,21 +214,48 @@ class Environment:
             )
         )
 
-    def _coefficients_for_decision(
+    def coefficients_for_decision(
         self,
         decision_index: int,
     ) -> dict[int, tuple[float, float, float, float, float]]:
         """Return the coefficient regime active at the decision index."""
         if decision_index < self.config.regime_change_point:
-            return GROUND_TRUTH_COEFFICIENTS
+            return self._coefficients
 
         return self._post_change_coefficients
 
-    @staticmethod
-    def _build_post_change_coefficients() -> dict[
-        int, tuple[float, float, float, float, float]
-    ]:
-        """Reverse temporal coefficients while preserving responsiveness."""
+    def _build_scaled_coefficients(
+        self,
+    ) -> dict[int, tuple[float, float, float, float, float]]:
+        """Scale temporal coefficients while preserving responsiveness."""
+        scaling = self.config.temporal_coefficient_scaling
+
+        if not np.isfinite(scaling):
+            raise ValueError(
+                "temporal_coefficient_scaling must be finite."
+            )
+
+        if scaling <= 0.0:
+            raise ValueError(
+                "temporal_coefficient_scaling must be positive."
+            )
+
+        return {
+            timing: (
+                coefficients[0] * scaling,
+                coefficients[1] * scaling,
+                coefficients[2] * scaling,
+                coefficients[3] * scaling,
+                coefficients[4],
+            )
+            for timing, coefficients
+            in GROUND_TRUTH_COEFFICIENTS.items()
+        }
+
+    def _build_post_change_coefficients(
+        self,
+    ) -> dict[int, tuple[float, float, float, float, float]]:
+        """Reverse scaled temporal coefficients while preserving responsiveness."""
         return {
             timing: (
                 coefficients[3],
@@ -216,5 +264,6 @@ class Environment:
                 coefficients[0],
                 coefficients[4],
             )
-            for timing, coefficients in GROUND_TRUTH_COEFFICIENTS.items()
+            for timing, coefficients
+            in self._coefficients.items()
         }

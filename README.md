@@ -3,26 +3,33 @@
 Simulation-based evaluation of a contextual bandit approach to adaptive
 nudge timing in an infinite-scroll social-media-inspired environment.
 
-## Research methods
+## Research Methods
 
 The simulation evaluates:
 
-- LinUCB as the primary contextual bandit method;
-- UCB1 as a non-contextual adaptive baseline;
-- a fixed 10-minute timing baseline.
+- **LinUCB** as the primary contextual bandit method;
+- **UCB1** as a non-contextual adaptive baseline;
+- **Fixed 10-minute timing** as a static baseline.
 
 The simulation uses synthetic session duration, contextual state,
 intervention timing, and intervention-response generation according to the
 methodology specified in the thesis.
 
-## Project structure
+The simulation is evaluated across independent replications using
+replication-level performance metrics and 95% confidence intervals.
+
+## Project Structure
 
 ```text
 src/adaptive_nudge/
+    __init__.py
+    algorithms.py
     config.py
     environment.py
-    algorithms.py
-    oracle.py
-    simulation.py
-    metrics.py
+    evaluation.py
     results.py
+    simulation.py
+
+tests/
+    test_environment.py
+    test_results.py

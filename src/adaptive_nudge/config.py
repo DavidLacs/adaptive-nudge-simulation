@@ -125,7 +125,11 @@ RESPONSIVENESS_WINDOW_SENSITIVITY = (3, 5, 10)
 
 LINUCB_ALPHA_SENSITIVITY = (0.5, 1.0, 2.0)
 
-TEMPORAL_COEFFICIENT_SCALING_SENSITIVITY = (0.8, 1.0, 1.2)
+TEMPORAL_COEFFICIENT_SCALING_SENSITIVITY = (
+    0.8,
+    1.0,
+    1.2,
+)
 
 RECENT_RESPONSIVENESS_COEFFICIENT = 0.03
 
@@ -134,22 +138,36 @@ RECENT_RESPONSIVENESS_COEFFICIENT = 0.03
 class SimulationConfig:
     """Resolved configuration for one simulation condition."""
 
-    decisions_per_replication: int = DECISIONS_PER_REPLICATION
+    decisions_per_replication: int = (
+        DECISIONS_PER_REPLICATION
+    )
     num_replications: int = NUM_REPLICATIONS
 
     session_duration_median_minutes: float = (
         SESSION_DURATION_MEDIAN_MINUTES
     )
-    session_duration_sigma: float = SESSION_DURATION_SIGMA
+    session_duration_sigma: float = (
+        SESSION_DURATION_SIGMA
+    )
 
-    responsiveness_window: int = RESPONSIVENESS_WINDOW
+    responsiveness_window: int = (
+        RESPONSIVENESS_WINDOW
+    )
 
     linucb_alpha: float = LINUCB_ALPHA
 
-    convergence_window: int = CONVERGENCE_WINDOW
-    convergence_threshold: float = CONVERGENCE_THRESHOLD
+    temporal_coefficient_scaling: float = 1.0
 
-    regime_change_fraction: float = REGIME_CHANGE_FRACTION
+    convergence_window: int = (
+        CONVERGENCE_WINDOW
+    )
+    convergence_threshold: float = (
+        CONVERGENCE_THRESHOLD
+    )
+
+    regime_change_fraction: float = (
+        REGIME_CHANGE_FRACTION
+    )
 
     base_seed: int = BASE_SEED
 
@@ -162,7 +180,8 @@ class SimulationConfig:
     def regime_change_point(self) -> int:
         """Decision index at which the non-stationary regime changes."""
         return int(
-            self.decisions_per_replication * self.regime_change_fraction
+            self.decisions_per_replication
+            * self.regime_change_fraction
         )
 
     @property
@@ -170,4 +189,6 @@ class SimulationConfig:
         """Lognormal location parameter derived from the specified median."""
         import math
 
-        return math.log(self.session_duration_median_minutes)
+        return math.log(
+            self.session_duration_median_minutes
+        )

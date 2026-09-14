@@ -11,6 +11,12 @@ dependencies = [
     "numpy>=2.0,<3.0",
     "pandas>=2.0,<3.0",
     "matplotlib>=3.8,<4.0",
+    "scipy>=1.14,<2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0,<10.0",
 ]
 
 [tool.setuptools.packages.find]
