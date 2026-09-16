@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-
 import hashlib
+import time
+from collections.abc import Callable
 
 import numpy as np
 
@@ -33,6 +34,9 @@ class DecisionRecord:
     opportunity: int
     response: int
     reward: float
+
+
+ProgressCallback = Callable[[int, int, int, int], None]
 
 
 class SimulationRunner:
@@ -160,12 +164,29 @@ class SimulationRunner:
         self,
         replication: int,
         master_seed: int,
+        progress_callback: ProgressCallback | None = None,
+        progress_interval_seconds: float = 5.0,
     ) -> list[DecisionRecord]:
-        """Run one independent replication."""
+        """Run one independent replication.
+
+        If a progress callback is supplied, progress is reported
+        approximately every ``progress_interval_seconds`` and once
+        when the replication finishes.
+        """
+        if replication < 0:
+            raise ValueError(
+                "replication must be non-negative."
+            )
+
         if replication >= self.config.num_replications:
             raise ValueError(
                 "replication must be smaller than "
                 "config.num_replications."
+            )
+
+        if progress_interval_seconds <= 0.0:
+            raise ValueError(
+                "progress_interval_seconds must be positive."
             )
 
         (
@@ -205,8 +226,17 @@ class SimulationRunner:
 
         records: list[DecisionRecord] = []
 
-        for decision_index in range(
+        start_time = time.monotonic()
+        next_progress_time = (
+            start_time + progress_interval_seconds
+        )
+
+        total_decisions = (
             self.config.decisions_per_replication
+        )
+
+        for decision_index in range(
+            total_decisions
         ):
             session: SessionState = (
                 self.environment.generate_session()
@@ -256,16 +286,47 @@ class SimulationRunner:
                 )
             )
 
+            if progress_callback is not None:
+                current_time = time.monotonic()
+
+                if current_time >= next_progress_time:
+                    progress_callback(
+                        replication,
+                        decision_index + 1,
+                        total_decisions,
+                        self.config.num_replications,
+                    )
+
+                    next_progress_time = (
+                        current_time
+                        + progress_interval_seconds
+                    )
+
+        if progress_callback is not None:
+            progress_callback(
+                replication,
+                total_decisions,
+                total_decisions,
+                self.config.num_replications,
+            )
+
         return records
 
     def run(
         self,
         master_seed: int,
+        progress_callback: ProgressCallback | None = None,
+        progress_interval_seconds: float = 5.0,
     ) -> list[DecisionRecord]:
         """Run all configured replications from one master seed."""
         if master_seed < 0:
             raise ValueError(
                 "master_seed must be non-negative."
+            )
+
+        if progress_interval_seconds <= 0.0:
+            raise ValueError(
+                "progress_interval_seconds must be positive."
             )
 
         records: list[DecisionRecord] = []
@@ -277,6 +338,10 @@ class SimulationRunner:
                 self.run_replication(
                     replication=replication,
                     master_seed=master_seed,
+                    progress_callback=progress_callback,
+                    progress_interval_seconds=(
+                        progress_interval_seconds
+                    ),
                 )
             )
 

@@ -131,8 +131,6 @@ TEMPORAL_COEFFICIENT_SCALING_SENSITIVITY = (
     1.2,
 )
 
-RECENT_RESPONSIVENESS_COEFFICIENT = 0.03
-
 
 @dataclass(frozen=True)
 class SimulationConfig:

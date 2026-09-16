@@ -13,7 +13,6 @@ from adaptive_nudge.config import SimulationConfig
 from adaptive_nudge.evaluation import (
     GroundTruthEvaluator,
     convergence_index,
-    optimal_action_indicators,
     recovery_delay,
     recovery_index,
 )
@@ -33,8 +32,8 @@ class ReplicationMetrics:
     successful_session_exit_rate: float
     optimal_arm_selection_rate: float
 
-    pre_change_optimal_arm_selection_rate: float
-    post_change_optimal_arm_selection_rate: float
+    pre_change_optimal_arm_selection_rate: float | None
+    post_change_optimal_arm_selection_rate: float | None
 
     convergence_index: int | None
     recovery_index: int | None
@@ -86,6 +85,7 @@ def evaluate_replication(
     actions: Sequence[int],
     evaluator: GroundTruthEvaluator,
     config: SimulationConfig,
+    non_stationary: bool = False,
     convergence_window: int | None = None,
     convergence_threshold: float | None = None,
 ) -> ReplicationMetrics:
@@ -129,10 +129,28 @@ def evaluate_replication(
             "starting at decision index 0."
         )
 
-    indicators = optimal_action_indicators(
-        records=records,
-        actions=actions,
-        evaluator=evaluator,
+    available_actions = tuple(
+        sorted(
+            set(actions)
+        )
+    )
+
+    if not available_actions:
+        raise ValueError(
+            "actions must contain at least one timing."
+        )
+
+    if any(
+        record.timing_minutes not in available_actions
+        for record in records
+    ):
+        raise ValueError(
+            "Every selected action must belong to actions."
+        )
+
+    indicators = np.empty(
+        len(records),
+        dtype=np.int8,
     )
 
     pseudo_regrets = np.empty(
@@ -141,13 +159,42 @@ def evaluate_replication(
     )
 
     for index, record in enumerate(records):
-        pseudo_regrets[index] = (
-            evaluator.pseudo_regret(
-                selected_action=record.timing_minutes,
-                context=record.context,
-                decision_index=record.decision_index,
-                actions=actions,
+        expected_rewards = np.array(
+            [
+                evaluator.expected_reward(
+                    timing_minutes=timing,
+                    context=record.context,
+                    decision_index=record.decision_index,
+                )
+                for timing in available_actions
+            ],
+            dtype=float,
+        )
+
+        optimal_reward = float(
+            np.max(expected_rewards)
+        )
+
+        selected_action_index = available_actions.index(
+            record.timing_minutes
+        )
+
+        selected_reward = float(
+            expected_rewards[selected_action_index]
+        )
+
+        indicators[index] = int(
+            math.isclose(
+                selected_reward,
+                optimal_reward,
+                rel_tol=1e-12,
+                abs_tol=1e-12,
             )
+        )
+
+        pseudo_regrets[index] = max(
+            0.0,
+            optimal_reward - selected_reward,
         )
 
     cumulative_pseudo_regret = float(
@@ -171,29 +218,33 @@ def evaluate_replication(
         np.mean(indicators)
     )
 
-    regime_change_point = config.regime_change_point
+    pre_change_optimal_arm_selection_rate: float | None = None
+    post_change_optimal_arm_selection_rate: float | None = None
 
-    if not 0 < regime_change_point < len(records):
-        raise ValueError(
-            "regime_change_point must divide the replication "
-            "into two non-empty regimes."
+    if non_stationary:
+        regime_change_point = config.regime_change_point
+
+        if not 0 < regime_change_point < len(records):
+            raise ValueError(
+                "regime_change_point must divide the replication "
+                "into two non-empty regimes."
+            )
+
+        pre_change_optimal_arm_selection_rate = (
+            _mean_indicator_rate(
+                indicators=indicators,
+                start=0,
+                end=regime_change_point,
+            )
         )
 
-    pre_change_optimal_arm_selection_rate = (
-        _mean_indicator_rate(
-            indicators=indicators,
-            start=0,
-            end=regime_change_point,
+        post_change_optimal_arm_selection_rate = (
+            _mean_indicator_rate(
+                indicators=indicators,
+                start=regime_change_point,
+                end=len(records),
+            )
         )
-    )
-
-    post_change_optimal_arm_selection_rate = (
-        _mean_indicator_rate(
-            indicators=indicators,
-            start=regime_change_point,
-            end=len(records),
-        )
-    )
 
     if convergence_window is None:
         convergence_window = config.convergence_window
@@ -214,17 +265,21 @@ def evaluate_replication(
             threshold=convergence_threshold,
         )
 
-        recovery = recovery_index(
-            indicators=indicators,
-            regime_change_point=regime_change_point,
-            window=convergence_window,
-            threshold=convergence_threshold,
-        )
+        if non_stationary:
+            recovery = recovery_index(
+                indicators=indicators,
+                regime_change_point=config.regime_change_point,
+                window=convergence_window,
+                threshold=convergence_threshold,
+            )
 
-        delay = recovery_delay(
-            recovery_index_value=recovery,
-            regime_change_point=regime_change_point,
-        )
+            delay = recovery_delay(
+                recovery_index_value=recovery,
+                regime_change_point=config.regime_change_point,
+            )
+        else:
+            recovery = None
+            delay = None
 
     return ReplicationMetrics(
         replication=first_record.replication,
@@ -359,20 +414,38 @@ def aggregate_replications(
             metric.optimal_arm_selection_rate
             for metric in metrics
         ],
-        "pre_change_optimal_arm_selection_rate": [
-            metric.pre_change_optimal_arm_selection_rate
-            for metric in metrics
-        ],
-        "post_change_optimal_arm_selection_rate": [
-            metric.post_change_optimal_arm_selection_rate
-            for metric in metrics
-        ],
     }
 
     aggregated = {
         name: aggregate_metric(values)
         for name, values in metric_values.items()
     }
+
+    pre_change_values = [
+        metric.pre_change_optimal_arm_selection_rate
+        for metric in metrics
+        if metric.pre_change_optimal_arm_selection_rate is not None
+    ]
+
+    post_change_values = [
+        metric.post_change_optimal_arm_selection_rate
+        for metric in metrics
+        if metric.post_change_optimal_arm_selection_rate is not None
+    ]
+
+    if pre_change_values:
+        aggregated["pre_change_optimal_arm_selection_rate"] = (
+            aggregate_metric(
+                pre_change_values
+            )
+        )
+
+    if post_change_values:
+        aggregated["post_change_optimal_arm_selection_rate"] = (
+            aggregate_metric(
+                post_change_values
+            )
+        )
 
     convergence_values = [
         metric.convergence_index

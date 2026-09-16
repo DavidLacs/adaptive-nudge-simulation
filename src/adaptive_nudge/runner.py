@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 
@@ -12,54 +12,84 @@ from adaptive_nudge.algorithms import (
     Static10MinuteBaseline,
     UCB1,
 )
-from adaptive_nudge.config import ACTION_SPACES, SimulationConfig
+from adaptive_nudge.config import SimulationConfig
 from adaptive_nudge.environment import Environment
 from adaptive_nudge.evaluation import GroundTruthEvaluator
+from adaptive_nudge.experiments import ExperimentCondition
 from adaptive_nudge.results import (
     ReplicationMetrics,
     aggregate_replications,
     evaluate_replication,
 )
-from adaptive_nudge.simulation import DecisionRecord, SimulationRunner
+from adaptive_nudge.simulation import (
+    DecisionRecord,
+    ProgressCallback,
+    SimulationRunner,
+)
 
 
 @dataclass(frozen=True)
 class ExperimentResult:
-    """Results for one algorithm/action-space condition."""
+    """Results for one experimental condition."""
 
-    algorithm: str
-    action_space_size: int
-    actions: tuple[int, ...]
+    condition: ExperimentCondition
     replication_metrics: tuple[ReplicationMetrics, ...]
     aggregated_metrics: dict[str, object]
 
 
 def _make_algorithm(
-    algorithm_name: str,
-    actions: tuple[int, ...],
+    condition: ExperimentCondition,
     config: SimulationConfig,
 ) -> BaseAlgorithm:
-    """Create the requested algorithm for one condition."""
+    """Create the algorithm specified by one experiment condition."""
 
-    if algorithm_name == "LinUCB":
+    if condition.algorithm == "LinUCB":
         return LinUCB(
-            actions=actions,
+            actions=condition.actions,
             context_dimension=config.context_dimension,
             alpha=config.linucb_alpha,
         )
 
-    if algorithm_name == "UCB1":
+    if condition.algorithm == "UCB1":
         return UCB1(
-            actions=actions,
+            actions=condition.actions,
         )
 
-    if algorithm_name == "Static10MinuteBaseline":
+    if condition.algorithm == "Static10MinuteBaseline":
         return Static10MinuteBaseline(
-            actions=actions,
+            actions=condition.actions,
         )
 
     raise ValueError(
-        f"Unsupported algorithm: {algorithm_name}"
+        f"Unsupported algorithm: {condition.algorithm}"
+    )
+
+
+def _config_for_condition(
+    config: SimulationConfig,
+    condition: ExperimentCondition,
+) -> SimulationConfig:
+    """Return the simulation configuration for one condition."""
+
+    if getattr(condition, "experiment_type", None) != "sensitivity":
+        return config
+
+    if condition.sensitivity_parameter is None:
+        raise ValueError(
+            "Sensitivity conditions require a sensitivity parameter."
+        )
+
+    if condition.sensitivity_value is None:
+        raise ValueError(
+            "Sensitivity conditions require a sensitivity value."
+        )
+
+    return replace(
+        config,
+        **{
+            condition.sensitivity_parameter:
+                condition.sensitivity_value
+        },
     )
 
 
@@ -81,14 +111,10 @@ def _group_records_by_replication(
             [],
         ).append(record)
 
-    actual_replications = sorted(
-        grouped
-    )
+    actual_replications = sorted(grouped)
 
     expected_replications = list(
-        range(
-            len(grouped)
-        )
+        range(len(grouped))
     )
 
     if actual_replications != expected_replications:
@@ -105,40 +131,82 @@ def _group_records_by_replication(
 
 def run_experiment_condition(
     config: SimulationConfig,
-    algorithm_name: str,
-    action_space_size: int,
+    condition: ExperimentCondition,
+    condition_index: int | None = None,
+    total_conditions: int | None = None,
 ) -> ExperimentResult:
-    """Run and evaluate one algorithm/action-space condition."""
+    """Run and evaluate one defined experimental condition."""
 
-    if action_space_size not in ACTION_SPACES:
-        raise ValueError(
-            f"Unsupported action-space size: {action_space_size}"
-        )
-
-    actions = tuple(
-        ACTION_SPACES[action_space_size]
+    condition_config = _config_for_condition(
+        config=config,
+        condition=condition,
     )
 
     algorithm = _make_algorithm(
-        algorithm_name=algorithm_name,
-        actions=actions,
-        config=config,
+        condition=condition,
+        config=condition_config,
+    )
+
+    non_stationary = (
+        condition.experiment_type == "non_stationary"
     )
 
     environment = Environment(
-        config=config,
+        config=condition_config,
         duration_rng=np.random.default_rng(0),
         context_rng=np.random.default_rng(1),
+        non_stationary=non_stationary,
     )
 
     simulation = SimulationRunner(
-        config=config,
+        config=condition_config,
         environment=environment,
         algorithm=algorithm,
     )
 
+    if condition_index is not None and total_conditions is not None:
+        print(
+            f"[{condition_index:02d}/{total_conditions:02d}] "
+            f"{condition.name}"
+        )
+
+    def report_progress(
+        replication: int,
+        completed_decisions: int,
+        total_decisions: int,
+        total_replications: int,
+    ) -> None:
+        """Print concise live simulation progress."""
+        percentage = (
+            100.0
+            * completed_decisions
+            / total_decisions
+        )
+
+        if completed_decisions == total_decisions:
+            print(
+                f"  Replication {replication + 1}/"
+                f"{total_replications} complete "
+                f"({total_decisions:,}/{total_decisions:,} "
+                f"decisions)"
+            )
+        else:
+            print(
+                f"  Replication {replication + 1}/"
+                f"{total_replications} | "
+                f"{completed_decisions:,}/"
+                f"{total_decisions:,} decisions "
+                f"({percentage:.1f}%)"
+            )
+
     records = simulation.run(
-        master_seed=config.base_seed
+        master_seed=condition_config.base_seed,
+        progress_callback=report_progress,
+        progress_interval_seconds=5.0,
+    )
+
+    print(
+        f"  All {len(records):,} decisions simulated."
     )
 
     records_by_replication = (
@@ -146,27 +214,85 @@ def run_experiment_condition(
     )
 
     evaluator = GroundTruthEvaluator(
-        config=config,
+        config=condition_config,
+        non_stationary=non_stationary,
     )
 
-    replication_metrics = tuple(
-        evaluate_replication(
+    evaluated_metrics: list[ReplicationMetrics] = []
+
+    total_replications = len(records_by_replication)
+
+    for replication_index, replication_records in enumerate(
+        records_by_replication,
+        start=1,
+    ):
+        metrics = evaluate_replication(
             records=replication_records,
-            actions=actions,
+            actions=condition.actions,
             evaluator=evaluator,
-            config=config,
+            config=condition_config,
+            non_stationary=non_stationary,
         )
-        for replication_records in records_by_replication
-    )
+
+        evaluated_metrics.append(metrics)
+
+        if (
+            replication_index == 1
+            or replication_index % 10 == 0
+            or replication_index == total_replications
+        ):
+            print(
+                f"  Evaluation: "
+                f"{replication_index}/"
+                f"{total_replications} complete"
+            )
+
+    replication_metrics = tuple(evaluated_metrics)
 
     aggregated_metrics = aggregate_replications(
         replication_metrics
     )
 
+    if condition_index is not None and total_conditions is not None:
+        print(
+            f"[{condition_index:02d}/{total_conditions:02d}] "
+            f"{condition.name} complete"
+        )
+        print()
+
     return ExperimentResult(
-        algorithm=algorithm_name,
-        action_space_size=action_space_size,
-        actions=actions,
+        condition=condition,
         replication_metrics=replication_metrics,
         aggregated_metrics=aggregated_metrics,
     )
+
+
+def run_experiment_suite(
+    config: SimulationConfig,
+    conditions: tuple[ExperimentCondition, ...],
+) -> tuple[ExperimentResult, ...]:
+    """Run all supplied experimental conditions."""
+
+    if not conditions:
+        raise ValueError(
+            "conditions must contain at least one experiment condition."
+        )
+
+    results: list[ExperimentResult] = []
+
+    total_conditions = len(conditions)
+
+    for condition_index, condition in enumerate(
+        conditions,
+        start=1,
+    ):
+        results.append(
+            run_experiment_condition(
+                config=config,
+                condition=condition,
+                condition_index=condition_index,
+                total_conditions=total_conditions,
+            )
+        )
+
+    return tuple(results)

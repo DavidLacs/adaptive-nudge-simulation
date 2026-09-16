@@ -14,7 +14,11 @@ from adaptive_nudge.environment import Environment
 class GroundTruthEvaluator:
     """Evaluate expected rewards using the environment's ground truth."""
 
-    def __init__(self, config: SimulationConfig) -> None:
+    def __init__(
+        self,
+        config: SimulationConfig,
+        non_stationary: bool = False,
+    ) -> None:
         self.config = config
 
         # The evaluator uses the Environment only for its deterministic
@@ -23,13 +27,50 @@ class GroundTruthEvaluator:
             config=config,
             duration_rng=np.random.default_rng(0),
             context_rng=np.random.default_rng(1),
+            non_stationary=non_stationary,
         )
 
-    def probability_of_reaching_timing(
+        # P(D >= a) depends only on the session-duration distribution
+        # and timing a. Cache it once for all timings used by the
+        # configured action spaces.
+        timing_values = sorted(
+            {
+                timing
+                for action_space in (
+                    # Importing ACTION_SPACES here would duplicate the
+                    # configuration source, so use the supported timing
+                    # range defined by the environment indirectly below.
+                    ()
+                )
+                for timing in action_space
+            }
+        )
+
+        # The experiment action spaces are fixed by the central
+        # configuration. Import them locally to keep the evaluator's
+        # existing top-level dependency surface unchanged.
+        from adaptive_nudge.config import ACTION_SPACES
+
+        timing_values = sorted(
+            {
+                timing
+                for action_space in ACTION_SPACES.values()
+                for timing in action_space
+            }
+        )
+
+        self._opportunity_probabilities = {
+            timing: self._compute_probability_of_reaching_timing(
+                timing
+            )
+            for timing in timing_values
+        }
+
+    def _compute_probability_of_reaching_timing(
         self,
         timing_minutes: int,
     ) -> float:
-        """Return P(D >= a) under the configured lognormal model."""
+        """Compute P(D >= a) under the configured lognormal model."""
         if timing_minutes <= 0:
             raise ValueError(
                 "timing_minutes must be positive."
@@ -48,6 +89,22 @@ class GroundTruthEvaluator:
         ) / (sigma * math.sqrt(2.0))
 
         return 0.5 * math.erfc(z)
+
+    def probability_of_reaching_timing(
+        self,
+        timing_minutes: int,
+    ) -> float:
+        """Return P(D >= a) under the configured lognormal model."""
+        if timing_minutes in self._opportunity_probabilities:
+            return self._opportunity_probabilities[timing_minutes]
+
+        probability = self._compute_probability_of_reaching_timing(
+            timing_minutes
+        )
+
+        self._opportunity_probabilities[timing_minutes] = probability
+
+        return probability
 
     def response_probability(
         self,
@@ -121,13 +178,13 @@ class GroundTruthEvaluator:
             * conditional_response_probability
         )
 
-    def optimal_actions(
+    def expected_rewards(
         self,
         context: np.ndarray,
         decision_index: int,
         actions: Sequence[int],
-    ) -> tuple[int, ...]:
-        """Return all actions attaining maximum expected reward."""
+    ) -> tuple[tuple[int, ...], np.ndarray]:
+        """Return available actions and their expected rewards."""
         available_actions = tuple(sorted(set(actions)))
 
         if not available_actions:
@@ -145,6 +202,21 @@ class GroundTruthEvaluator:
                 for timing in available_actions
             ],
             dtype=float,
+        )
+
+        return available_actions, rewards
+
+    def optimal_actions(
+        self,
+        context: np.ndarray,
+        decision_index: int,
+        actions: Sequence[int],
+    ) -> tuple[int, ...]:
+        """Return all actions attaining maximum expected reward."""
+        available_actions, rewards = self.expected_rewards(
+            context=context,
+            decision_index=decision_index,
+            actions=actions,
         )
 
         maximum_reward = float(
@@ -173,38 +245,33 @@ class GroundTruthEvaluator:
         actions: Sequence[int],
     ) -> float:
         """Return one-decision ground-truth pseudo-regret."""
-        available_actions = tuple(sorted(set(actions)))
-
-        if not available_actions:
-            raise ValueError(
-                "actions must contain at least one timing."
-            )
+        available_actions, rewards = self.expected_rewards(
+            context=context,
+            decision_index=decision_index,
+            actions=actions,
+        )
 
         if selected_action not in available_actions:
             raise ValueError(
                 "selected_action must belong to actions."
             )
 
-        selected_reward = self.expected_reward(
-            timing_minutes=selected_action,
-            context=context,
-            decision_index=decision_index,
+        selected_index = available_actions.index(
+            selected_action
         )
 
-        optimal_reward = max(
-            self.expected_reward(
-                timing_minutes=timing,
-                context=context,
-                decision_index=decision_index,
-            )
-            for timing in available_actions
+        selected_reward = float(
+            rewards[selected_index]
+        )
+
+        optimal_reward = float(
+            np.max(rewards)
         )
 
         return max(
             0.0,
             optimal_reward - selected_reward,
         )
-
 
     def is_optimal_action(
         self,
@@ -388,5 +455,3 @@ def recovery_delay(
         recovery_index_value
         - regime_change_point
     )
-
-    

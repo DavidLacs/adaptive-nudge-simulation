@@ -42,11 +42,13 @@ class Environment:
         config: SimulationConfig,
         duration_rng: np.random.Generator,
         context_rng: np.random.Generator,
+        non_stationary: bool = False,
     ) -> None:
         self.config = config
         self._duration_rng = duration_rng
         self._context_rng = context_rng
         self._delivered_outcomes: list[int] = []
+        self._non_stationary = non_stationary
 
         self._coefficients = (
             self._build_scaled_coefficients()
@@ -218,7 +220,15 @@ class Environment:
         self,
         decision_index: int,
     ) -> dict[int, tuple[float, float, float, float, float]]:
-        """Return the coefficient regime active at the decision index."""
+        """Return the coefficient regime active at the decision index.
+
+        Stationary conditions use the same coefficient regime throughout
+        the replication. Non-stationary conditions switch to the
+        post-change regime at the configured regime-change point.
+        """
+        if not self._non_stationary:
+            return self._coefficients
+
         if decision_index < self.config.regime_change_point:
             return self._coefficients
 

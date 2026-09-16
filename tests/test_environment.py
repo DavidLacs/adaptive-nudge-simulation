@@ -17,6 +17,7 @@ from adaptive_nudge.environment import Environment
 
 def make_environment(
     config: SimulationConfig | None = None,
+    non_stationary: bool = False,
 ) -> Environment:
     """Create an environment with deterministic test RNG streams."""
     if config is None:
@@ -26,10 +27,36 @@ def make_environment(
         config=config,
         duration_rng=np.random.default_rng(0),
         context_rng=np.random.default_rng(1),
+        non_stationary=non_stationary,
     )
 
 
-def test_default_scaling_preserves_original_pre_change_coefficients() -> None:
+def test_default_environment_is_stationary() -> None:
+    """The default environment must use stationary coefficients."""
+    config = SimulationConfig(
+        temporal_coefficient_scaling=1.2
+    )
+    environment = make_environment(config)
+
+    coefficients = environment.coefficients_for_decision(
+        decision_index=config.regime_change_point
+    )
+
+    for timing, original in GROUND_TRUTH_COEFFICIENTS.items():
+        expected = (
+            original[0] * 1.2,
+            original[1] * 1.2,
+            original[2] * 1.2,
+            original[3] * 1.2,
+            original[4],
+        )
+
+        assert coefficients[timing] == pytest.approx(
+            expected
+        )
+
+
+def test_default_scaling_preserves_original_stationary_coefficients() -> None:
     """The default scaling of 1.0 must preserve the thesis coefficients."""
     environment = make_environment()
 
@@ -38,6 +65,16 @@ def test_default_scaling_preserves_original_pre_change_coefficients() -> None:
     )
 
     assert coefficients == GROUND_TRUTH_COEFFICIENTS
+
+    post_boundary_coefficients = (
+        environment.coefficients_for_decision(
+            decision_index=environment.config.regime_change_point
+        )
+    )
+
+    assert post_boundary_coefficients == (
+        GROUND_TRUTH_COEFFICIENTS
+    )
 
 
 def test_temporal_scaling_08_scales_only_temporal_coefficients() -> None:
@@ -99,7 +136,10 @@ def test_post_change_reverses_scaled_temporal_coefficients() -> None:
     config = SimulationConfig(
         temporal_coefficient_scaling=1.2
     )
-    environment = make_environment(config)
+    environment = make_environment(
+        config,
+        non_stationary=True,
+    )
 
     post_change = environment.coefficients_for_decision(
         decision_index=config.regime_change_point
@@ -124,13 +164,16 @@ def test_post_change_reverses_scaled_temporal_coefficients() -> None:
 
 
 def test_regime_change_uses_pre_change_before_boundary_and_post_change_at_boundary() -> None:
-    """The coefficient regime must change exactly at the configured boundary."""
+    """The non-stationary regime must change exactly at the configured boundary."""
     config = SimulationConfig(
         decisions_per_replication=100,
         regime_change_fraction=0.5,
         temporal_coefficient_scaling=1.2,
     )
-    environment = make_environment(config)
+    environment = make_environment(
+        config,
+        non_stationary=True,
+    )
 
     pre_change = environment.coefficients_for_decision(
         decision_index=49
@@ -181,7 +224,10 @@ def test_specified_temporal_scaling_values_produce_valid_response_probabilities(
         config = SimulationConfig(
             temporal_coefficient_scaling=scaling
         )
-        environment = make_environment(config)
+        environment = make_environment(
+            config,
+            non_stationary=True,
+        )
 
         for decision_index in (
             0,
@@ -201,7 +247,13 @@ def test_specified_temporal_scaling_values_produce_valid_response_probabilities(
 
 def test_invalid_temporal_coefficient_scaling_is_rejected() -> None:
     """Non-positive or non-finite scaling values must be rejected."""
-    for scaling in (0.0, -0.1, math.nan, math.inf, -math.inf):
+    for scaling in (
+        0.0,
+        -0.1,
+        math.nan,
+        math.inf,
+        -math.inf,
+    ):
         config = SimulationConfig(
             temporal_coefficient_scaling=scaling
         )

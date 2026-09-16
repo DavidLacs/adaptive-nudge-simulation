@@ -1,9 +1,12 @@
+"""Tests for simulation result evaluation and aggregation."""
+
+from __future__ import annotations
+
 import math
+from dataclasses import replace
 
 import numpy as np
 import pytest
-
-from dataclasses import replace
 
 from adaptive_nudge.algorithms import (
     LinUCB,
@@ -14,10 +17,7 @@ from adaptive_nudge.config import (
     SimulationConfig,
 )
 from adaptive_nudge.environment import Environment
-from adaptive_nudge.evaluation import (
-    GroundTruthEvaluator,
-)
-from adaptive_nudge.simulation import SimulationRunner
+from adaptive_nudge.evaluation import GroundTruthEvaluator
 from adaptive_nudge.results import (
     AggregateMetric,
     ReplicationMetrics,
@@ -25,6 +25,7 @@ from adaptive_nudge.results import (
     aggregate_replications,
     evaluate_replication,
 )
+from adaptive_nudge.simulation import SimulationRunner
 
 
 def test_aggregate_metric_known_values() -> None:
@@ -141,7 +142,7 @@ def test_replication_level_statistics_are_not_pooled() -> None:
 
 
 def test_evaluate_replication_from_actual_simulation() -> None:
-    """Verify evaluation against one real simulation replication."""
+    """Verify evaluation against one real stationary simulation replication."""
 
     base_config = SimulationConfig()
 
@@ -176,6 +177,7 @@ def test_evaluate_replication_from_actual_simulation() -> None:
 
     evaluator = GroundTruthEvaluator(
         config=config,
+        non_stationary=False,
     )
 
     metrics = evaluate_replication(
@@ -183,6 +185,7 @@ def test_evaluate_replication_from_actual_simulation() -> None:
         actions=ACTION_SPACES[5],
         evaluator=evaluator,
         config=config,
+        non_stationary=False,
         convergence_window=100,
     )
 
@@ -208,43 +211,26 @@ def test_evaluate_replication_from_actual_simulation() -> None:
     )
 
     assert (
-        metrics.successful_session_exit_rate
-        >= 0.0
-    )
-
-    assert (
-        metrics.successful_session_exit_rate
+        0.0
+        <= metrics.successful_session_exit_rate
         <= 1.0
     )
 
     assert (
-        metrics.optimal_arm_selection_rate
-        >= 0.0
-    )
-
-    assert (
-        metrics.optimal_arm_selection_rate
+        0.0
+        <= metrics.optimal_arm_selection_rate
         <= 1.0
     )
 
+    # Regime-specific metrics are undefined for stationary experiments.
     assert (
         metrics.pre_change_optimal_arm_selection_rate
-        >= 0.0
-    )
-
-    assert (
-        metrics.pre_change_optimal_arm_selection_rate
-        <= 1.0
+        is None
     )
 
     assert (
         metrics.post_change_optimal_arm_selection_rate
-        >= 0.0
-    )
-
-    assert (
-        metrics.post_change_optimal_arm_selection_rate
-        <= 1.0
+        is None
     )
 
     assert (
@@ -256,22 +242,9 @@ def test_evaluate_replication_from_actual_simulation() -> None:
         )
     )
 
-    assert (
-        metrics.recovery_index is None
-        or (
-            metrics.recovery_index
-            >= config.regime_change_point + 100
-        )
-    )
+    assert metrics.recovery_index is None
 
-    if metrics.recovery_index is None:
-        assert metrics.recovery_delay is None
-    else:
-        assert metrics.recovery_delay is not None
-        assert (
-            metrics.recovery_delay
-            >= 100
-        )
+    assert metrics.recovery_delay is None
 
 
 def test_aggregate_replications_known_metrics() -> None:
@@ -507,8 +480,8 @@ def test_mixed_algorithms_are_rejected() -> None:
         aggregate_replications(metrics)
 
 
-def test_static_baseline_has_no_convergence_or_recovery_metrics() -> None:
-    """Verify adaptive-learning metrics are not assigned to the static baseline."""
+def test_static_baseline_has_no_adaptive_learning_or_regime_metrics() -> None:
+    """Verify the static baseline has no adaptive-learning metrics."""
 
     base_config = SimulationConfig()
 
@@ -541,6 +514,7 @@ def test_static_baseline_has_no_convergence_or_recovery_metrics() -> None:
 
     evaluator = GroundTruthEvaluator(
         config=config,
+        non_stationary=False,
     )
 
     metrics = evaluate_replication(
@@ -548,6 +522,7 @@ def test_static_baseline_has_no_convergence_or_recovery_metrics() -> None:
         actions=ACTION_SPACES[5],
         evaluator=evaluator,
         config=config,
+        non_stationary=False,
         convergence_window=100,
     )
 
@@ -582,16 +557,15 @@ def test_static_baseline_has_no_convergence_or_recovery_metrics() -> None:
         <= 1.0
     )
 
+    # Regime-specific metrics are undefined for stationary experiments.
     assert (
-        0.0
-        <= metrics.pre_change_optimal_arm_selection_rate
-        <= 1.0
+        metrics.pre_change_optimal_arm_selection_rate
+        is None
     )
 
     assert (
-        0.0
-        <= metrics.post_change_optimal_arm_selection_rate
-        <= 1.0
+        metrics.post_change_optimal_arm_selection_rate
+        is None
     )
 
     assert metrics.convergence_index is None
