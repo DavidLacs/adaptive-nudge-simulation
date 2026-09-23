@@ -21,15 +21,35 @@ replication-level performance metrics and 95% confidence intervals.
 ## Project Structure
 
 ```text
-src/adaptive_nudge/
-    __init__.py
-    algorithms.py
-    config.py
-    environment.py
-    evaluation.py
-    results.py
-    simulation.py
-
-tests/
-    test_environment.py
-    test_results.py
+adaptive-nudge-simulation/
+├── src/
+│   └── adaptive_nudge/
+│       ├── __init__.py
+│       ├── algorithms.py
+│       ├── config.py
+│       ├── environment.py
+│       ├── evaluation.py
+│       ├── experiments.py
+│       ├── results.py
+│       ├── runner.py
+│       └── simulation.py
+│
+├── tests/
+│   ├── test_environment.py
+│   ├── test_experiments.py
+│   ├── test_results.py
+│   ├── test_runner.py
+│   └── test_simulation.py
+│
+├── scripts/
+│   ├── run_full_experiment.py
+│   ├── run_primary.py
+│   ├── smoke_run.py
+│   └── validation_run.py
+│
+├── primary_results.csv
+├── smoke_results.csv
+├── validation_results.csv
+├── .gitignore
+├── pyproject.toml
+└── README.md
